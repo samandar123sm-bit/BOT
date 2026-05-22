@@ -2216,7 +2216,7 @@ function adminSetStatus(orderNum, newStatus){
     delivering:`🚚 Buyurtmangiz ${orderNum} chiqib ketti! Biroz kuting 🕐`,
     done:`✅ Buyurtmangiz ${orderNum} yetib keldi! Ishtaha bo'lsin! 🍔`,
     rejected:`❌ Afsuski, buyurtmangiz ${orderNum} rad etildi. Biz bilan bog'laning.`,
-    unavailable:`😔 Buyurtmangiz ${orderNum} da ba'zi mahsulotlar qolmagan. Iltimos, qayta buyurtma bering yoki admin bilan boglanib pulingizni qaytaring yoki almasgtiring +998990041166.`,
+    unavailable:`😔 Buyurtmangiz ${orderNum} da ba'zi mahsulotlar qolmagan. Iltimos, qayta buyurtma bering.`,
   };
 
   const BOT_TOKEN='8767223581:AAHcaekUAnascE8YnM1jaTlJzRPxbC_gNMM';
@@ -2841,7 +2841,7 @@ function admSetStatus(num,status){
   if(idx>=0){arr[idx].status=status;localStorage.setItem('zm_orders',JSON.stringify(arr));}
   admSaveOrderStatus(order);
   // Mijozga xabar
-  const msgs={confirmed:`✅ Buyurtmangiz ${num} tasdiqlandi!`,delivering:`🚚 Buyurtmangiz ${num} chiqib ketti!`,done:`✅ Buyurtmangiz ${num} yetib keldi!`,rejected:`❌ Buyurtmangiz ${num} rad etildi.`,unavailable:`😔 Buyurtmangiz ${num} da mahsulot qolmagan. +998990041166 adminga murojot qiling`};
+  const msgs={confirmed:`✅ Buyurtmangiz ${num} tasdiqlandi!`,delivering:`🚚 Buyurtmangiz ${num} chiqib ketti!`,done:`✅ Buyurtmangiz ${num} yetib keldi!`,rejected:`❌ Buyurtmangiz ${num} rad etildi.`,unavailable:`😔 Buyurtmangiz ${num} da mahsulot qolmagan.`};
   if(order.tgId&&msgs[status]){
     fetch(`https://api.telegram.org/bot${ADM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:order.tgId,text:msgs[status]})}).catch(()=>{});
   }
