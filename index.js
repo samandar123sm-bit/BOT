@@ -4,15 +4,13 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
-// HTML faylni serve qilish (ilova)
 app.use(express.static(path.join(__dirname)));
 
 const BOT_TOKEN = '8767223581:AAHcaekUAnascE8YnM1jaTlJzRPxbC_gNMM';
 const APP_URL = 'https://t.me/ZeroMaxxbot/ilovasi';
 const ADMIN_PASSWORD = 'zeromaks2026';
-const API = https://api.telegram.org/bot${BOT_TOKEN};
+const API = 'https://api.telegram.org/bot' + BOT_TOKEN;
 
-// ===================== DATABASE =====================
 const DB_FILE = './db.json';
 
 function loadDB() {
@@ -55,10 +53,9 @@ function setAdminState(chat_id, state) {
   saveDB(db);
 }
 
-// ===================== TELEGRAM API =====================
-async function sendMessage(chat_id, text, extra = {}) {
-  const body = { chat_id, text, parse_mode: 'HTML', ...extra };
-  const res = await fetch(${API}/sendMessage, {
+async function sendMessage(chat_id, text, extra) {
+  const body = Object.assign({ chat_id: chat_id, text: text, parse_mode: 'HTML' }, extra || {});
+  const res = await fetch(API + '/sendMessage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -67,30 +64,28 @@ async function sendMessage(chat_id, text, extra = {}) {
 }
 
 async function copyMessage(chat_id, from_chat_id, message_id) {
-  const res = await fetch(${API}/copyMessage, {
+  const res = await fetch(API + '/copyMessage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id, from_chat_id, message_id })
+    body: JSON.stringify({ chat_id: chat_id, from_chat_id: from_chat_id, message_id: message_id })
   });
   return res.json();
 }
 
-// Pastki menyu tugmalari
 const MAIN_MENU = {
   keyboard: [
     [{ text: '🛒 Buyurtma berish' }, { text: '⚙️ Admin' }],
-    [{ text: '👨‍💻 Dasturchi bilan bog\'lanish' }]
+    [{ text: '👨‍💻 Dasturchi bilan boglanish' }]
   ],
   resize_keyboard: true,
   persistent: true
 };
 
-// ===================== WEBHOOK =====================
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', async function(req, res) {
   res.sendStatus(200);
 
   const update = req.body;
-  const message = update?.message;
+  const message = update && update.message;
   if (!message) return;
 
   const chat_id = message.chat.id;
@@ -98,14 +93,12 @@ app.post('/webhook', async (req, res) => {
   const text = message.text || '';
   const state = getAdminState(chat_id);
 
-  // Foydalanuvchini saqla
   saveUser(from);
 
-  // ── /start ──
-  if (text === '/start' || text.startsWith('/start ')) {
+  if (text === '/start' || text.indexOf('/start ') === 0) {
     await sendMessage(
       chat_id,
-      👋 <b>Assalomu alaykum, ${from.first_name || 'do\'st'}!</b>\n\nZero Maks ilovasiga xush kelibsiz! 🍕🍔\n\nOnlayn buyurtma berish uchun quyidagi tugmani bosing 👇,
+      '<b>Assalomu alaykum, ' + (from.first_name || 'doest') + '!</b>\n\nZero Maks ilovasiga xush kelibsiz!\n\nOnlayn buyurtma berish uchun quyidagi tugmani bosing',
       {
         reply_markup: {
           inline_keyboard: [[
@@ -114,22 +107,21 @@ app.post('/webhook', async (req, res) => {
         }
       }
     );
-    await sendMessage(chat_id, '⬇️ Quyidagi menyudan foydalaning:', {
+    await sendMessage(chat_id, 'Quyidagi menyudan foydalaning:', {
       reply_markup: MAIN_MENU
     });
     return;
   }
 
-  // ── Admin holati: parol kutilmoqda ──
   if (state === 'wait_password') {
     if (text === '❌ Bekor qilish') {
       setAdminState(chat_id, null);
-      await sendMessage(chat_id, '↩️ Bekor qilindi.', { reply_markup: MAIN_MENU });
+      await sendMessage(chat_id, 'Bekor qilindi.', { reply_markup: MAIN_MENU });
       return;
     }
     if (text === ADMIN_PASSWORD) {
       setAdminState(chat_id, 'wait_broadcast');
-      await sendMessage(chat_id, '✅ <b>Parol to\'g\'ri!</b>\n\nYuboriladigan xabarni yozing yoki rasm/video/fayl yuboring.\nBarcha foydalanuvchilarga tarqatiladi 📢', {
+      await sendMessage(chat_id, '✅ <b>Parol togri!</b>\n\nYuboriladigan xabarni yozing yoki rasm/video yuboring.\nBarcha foydalanuvchilarga tarqatiladi', {
         reply_markup: {
           keyboard: [[{ text: '❌ Bekor qilish' }]],
           resize_keyboard: true
@@ -137,14 +129,86 @@ app.post('/webhook', async (req, res) => {
       });
     } else {
       setAdminState(chat_id, null);
-      await sendMessage(chat_id, '❌ <b>Parol noto\'g\'ri!</b>', { reply_markup: MAIN_MENU });
+      await sendMessage(chat_id, '❌ <b>Parol notogri!</b>', { reply_markup: MAIN_MENU });
     }
     return;
   }
-  // ── Admin holati: broadcast xabari kutilmoqda ──
+
   if (state === 'wait_broadcast') {
     if (text === '❌ Bekor qilish') {
       setAdminState(chat_id, null);
-      await sendMessage(chat_id, '↩️ Bekor qilindi.', { reply_markup: MAIN_MENU });
+      await sendMessage(chat_id, 'Bekor qilindi.', { reply_markup: MAIN_MENU });
       return;
     }
+
+    setAdminState(chat_id, null);
+    const users = getAllUsers();
+    let success = 0, failed = 0;
+
+    await sendMessage(chat_id, 'Yuborilmoqda... (' + users.length + ' ta foydalanuvchi)');
+
+    for (let i = 0; i < users.length; i++) {
+      const user = users[i];
+      if (String(user.id) === String(chat_id)) { success++; continue; }
+      try {
+        const r = await copyMessage(user.id, chat_id, message.message_id);
+        if (r.ok) success++;
+        else failed++;
+      } catch(e) { failed++; }
+      await new Promise(function(r) { setTimeout(r, 50); });
+    }
+
+    await sendMessage(
+      chat_id,
+      '✅ <b>Xabar tarqatildi!</b>\n\nJami: ' + users.length + ' ta\nYuborildi: ' + success + ' ta\nXato: ' + failed + ' ta',
+      { reply_markup: MAIN_MENU }
+    );
+    return;
+  }
+
+  if (text === '🛒 Buyurtma berish') {
+    await sendMessage(chat_id, 'Buyurtma berish uchun ilovani oching:', {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '🛒 Ilovani ochish', web_app: { url: APP_URL } }
+        ]]
+      }
+    });
+    return;
+  }
+
+  if (text === '⚙️ Admin') {
+    setAdminState(chat_id, 'wait_password');
+    await sendMessage(chat_id, '🔐 <b>Admin paneli</b>\n\nParolni kiriting:', {
+      reply_markup: {
+        keyboard: [[{ text: '❌ Bekor qilish' }]],
+        resize_keyboard: true
+      }
+    });
+    return;
+  }
+
+  if (text === '👨‍💻 Dasturchi bilan boglanish') {
+    await sendMessage(
+      chat_id,
+      '👨‍💻 <b>Dasturchi:</b> @xwSamandar\n\nHar qanday savol yoki taklif uchun murojaat qiling!',
+      { reply_markup: MAIN_MENU }
+    );
+    return;
+  }
+
+  if (text === '❌ Bekor qilish') {
+    setAdminState(chat_id, null);
+    await sendMessage(chat_id, 'Bekor qilindi.', { reply_markup: MAIN_MENU });
+    return;
+  }
+});
+
+app.get('/health', function(req, res) {
+  res.send('Zero Maks Bot ishlaypti');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, function() {
+  console.log('Server port ' + PORT + ' da ishga tushdi');
+});
