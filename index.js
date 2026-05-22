@@ -1,3 +1,4 @@
+Content is user-generated and unverified.
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -74,17 +75,111 @@ async function copyMessage(chat_id, from_chat_id, message_id) {
 
 const MAIN_MENU = {
   keyboard: [
-    [{ text: '🛒 Buyurtma berish' }, { text: '⚙️ Admin' }],
     [{ text: '👨‍💻 Dasturchi bilan boglanish' }]
   ],
   resize_keyboard: true,
   persistent: true
 };
 
+async function answerCallback(callback_query_id, text) {
+  await fetch(API + '/answerCallbackQuery', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id, text: text || '' })
+  });
+}
+
+async function editMessageReplyMarkup(chat_id, message_id) {
+  await fetch(API + '/editMessageReplyMarkup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id, message_id, reply_markup: { inline_keyboard: [] } })
+  }).catch(() => {});
+}
+
+async function sendToUser(tgId, text) {
+  if (!tgId) return;
+  await fetch(API + '/sendMessage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: tgId, text })
+  }).catch(() => {});
+}
+
 app.post('/webhook', async function(req, res) {
   res.sendStatus(200);
 
   const update = req.body;
+
+  // ====== CALLBACK QUERY HANDLER ======
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    const data = cb.data || '';
+    const cbChatId = cb.message && cb.message.chat && cb.message.chat.id;
+    const msgId = cb.message && cb.message.message_id;
+
+    // tgId ni xabar matnidan olamiz
+    const msgText = (cb.message && (cb.message.caption || cb.message.text)) || '';
+    const tgMatch = msgText.match(/Telegram ID[:\s]+([0-9]+)/);
+    const tgId = tgMatch ? tgMatch[1] : null;
+
+    // Buyurtma raqamini olamiz
+    const orderMatch = msgText.match(/#([0-9]+)/);
+    const orderNum = orderMatch ? '#' + orderMatch[1] : null;
+
+    const statusMsgMap = {
+      confirmed: `✅ Buyurtmangiz ${orderNum} tasdiqlandi! Tayyorlanmoqda 👨‍🍳`,
+      rejected:  `❌ Afsuski, buyurtmangiz ${orderNum} rad etildi.`,
+      delivering:`🚚 Buyurtmangiz ${orderNum} chiqib ketti! Biroz kuting 🕐`,
+      done:      `✅ Buyurtmangiz ${orderNum} yetib keldi! Ishtaha bo'lsin! 🍔`,
+      unavailable:`😔 Buyurtmangiz ${orderNum} da ba'zi mahsulotlar qolmagan.`,
+    };
+
+    let action = null;
+
+    if (data.startsWith('pay_ok_')) {
+      action = 'confirmed';
+    } else if (data.startsWith('pay_rej_')) {
+      action = 'rejected';
+    } else if (data.startsWith('confirm_')) {
+      action = 'confirmed';
+    } else if (data.startsWith('reject_')) {
+      action = 'rejected';
+    } else if (data.startsWith('deliver_')) {
+      action = 'delivering';
+    } else if (data.startsWith('unavail_') || data.startsWith('nostock_')) {
+      action = 'unavailable';
+    }
+
+    if (action) {
+      // Foydalanuvchiga xabar yuborish
+      if (tgId && statusMsgMap[action]) {
+        await sendToUser(tgId, statusMsgMap[action]);
+      }
+      // Callback ga javob berish (yuklash ko'rsatkichini o'chirish)
+      await answerCallback(cb.id, action === 'confirmed' ? '✅ Tasdiqlandi' : action === 'rejected' ? '❌ Rad etildi' : '✔️ Bajarildi');
+      // Tugmalarni o'chirish
+      if (cbChatId && msgId) {
+        await editMessageReplyMarkup(cbChatId, msgId);
+      }
+      // Guruhga status xabari
+      if (cbChatId) {
+        const adminMsg = {
+          confirmed: `✅ <b>TASDIQLANDI</b> — ${orderNum}`,
+          rejected:  `❌ <b>RAD ETILDI</b> — ${orderNum}`,
+          delivering:`🚚 <b>CHIQIB KETTI</b> — ${orderNum}`,
+          done:      `✅ <b>YETKAZILDI</b> — ${orderNum}`,
+          unavailable:`😔 <b>MAHSULOT QOLMAGAN</b> — ${orderNum}`,
+        };
+        await sendMessage(cbChatId, adminMsg[action] || `✔️ ${orderNum} — ${action}`, {});
+      }
+    } else {
+      await answerCallback(cb.id, '');
+    }
+    return;
+  }
+  // ====================================
+
   const message = update && update.message;
   if (!message) return;
 
@@ -163,28 +258,6 @@ app.post('/webhook', async function(req, res) {
       '✅ <b>Xabar tarqatildi!</b>\n\nJami: ' + users.length + ' ta\nYuborildi: ' + success + ' ta\nXato: ' + failed + ' ta',
       { reply_markup: MAIN_MENU }
     );
-    return;
-  }
-
-  if (text === '🛒 Buyurtma berish') {
-    await sendMessage(chat_id, 'Buyurtma berish uchun ilovani oching:', {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '🛒 Ilovani ochish', web_app: { url: APP_URL } }
-        ]]
-      }
-    });
-    return;
-  }
-
-  if (text === '⚙️ Admin') {
-    setAdminState(chat_id, 'wait_password');
-    await sendMessage(chat_id, '🔐 <b>Admin paneli</b>\n\nParolni kiriting:', {
-      reply_markup: {
-        keyboard: [[{ text: '❌ Bekor qilish' }]],
-        resize_keyboard: true
-      }
-    });
     return;
   }
 
