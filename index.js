@@ -141,79 +141,10 @@ app.post('/webhook', async (req, res) => {
     }
     return;
   }
-// ── Admin holati: broadcast xabari kutilmoqda ──
+  // ── Admin holati: broadcast xabari kutilmoqda ──
   if (state === 'wait_broadcast') {
     if (text === '❌ Bekor qilish') {
       setAdminState(chat_id, null);
       await sendMessage(chat_id, '↩️ Bekor qilindi.', { reply_markup: MAIN_MENU });
       return;
     }
-
-    setAdminState(chat_id, null);
-    const users = getAllUsers();
-    let success = 0, failed = 0;
-
-    await sendMessage(chat_id, 📤 Yuborilmoqda... (${users.length} ta foydalanuvchi));
-
-    for (const user of users) {
-      if (String(user.id) === String(chat_id)) { success++; continue; }
-      try {
-        const r = await copyMessage(user.id, chat_id, message.message_id);
-        if (r.ok) success++;
-        else failed++;
-      } catch(e) { failed++; }
-      await new Promise(r => setTimeout(r, 50));
-    }
-
-    await sendMessage(
-      chat_id,
-      ✅ <b>Xabar tarqatildi!</b>\n\n👥 Jami: ${users.length} ta\n✅ Yuborildi: ${success} ta\n❌ Xato: ${failed} ta,
-      { reply_markup: MAIN_MENU }
-    );
-    return;
-  }
-
-  // ── Tugmalar ──
-  if (text === '🛒 Buyurtma berish') {
-    await sendMessage(chat_id, '🛒 Buyurtma berish uchun ilovani oching:', {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '🛒 Ilovani ochish', web_app: { url: APP_URL } }
-        ]]
-      }
-    });
-    return;
-  }
-
-  if (text === '⚙️ Admin') {
-    setAdminState(chat_id, 'wait_password');
-    await sendMessage(chat_id, '🔐 <b>Admin paneli</b>\n\nParolni kiriting:', {
-      reply_markup: {
-        keyboard: [[{ text: '❌ Bekor qilish' }]],
-        resize_keyboard: true
-      }
-    });
-    return;
-  }
-
-  if (text === '👨‍💻 Dasturchi bilan bog\'lanish') {
-    await sendMessage(
-      chat_id,
-      '👨‍💻 <b>Dasturchi:</b> @xwSamandar\n\nHar qanday savol yoki taklif uchun murojaat qiling!',
-      { reply_markup: MAIN_MENU }
-    );
-    return;
-  }
-
-  if (text === '❌ Bekor qilish') {
-    setAdminState(chat_id, null);
-    await sendMessage(chat_id, '↩️ Bekor qilindi.', { reply_markup: MAIN_MENU });
-    return;
-  }
-});
-
-// Health check
-app.get('/health', (req, res) => res.send('Zero Maks Bot ✅ ishlayapti'));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(Server port ${PORT} da ishga tushdi));
