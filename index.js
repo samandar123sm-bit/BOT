@@ -160,7 +160,7 @@ async function askGroq(systemPrompt, userMessage, temperature = 0.3) {
 }
 
 async function askZeroMaksAI(userMessage, context = '', userId = null) {
-  const systemPrompt = `Sen ZeroMaks — Toshkentdagi eng yaxshi ovqat yetkazib berish xizmatining aqlli AI yordamchisisan.
+  const systemPrompt = `Sen ZeroMaks AI — Toshkentdagi eng yaxshi ovqat yetkazib berish xizmatining aqlli AI yordamchisisan. Ismingiz: ZeroMaks AI.
 
 ━━━━━━━━━━━━━━━━━━━━━━
 🏪 BIZNES MA'LUMOTLARI
@@ -523,4 +523,186 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (data.startsWith('nostock_')) {
-      
+      const orderNum = data.replace('nostock_', '');
+      const msgText = cb.message?.text || '';
+      const tgMatch = msgText.match(/ID[:\s]+([0-9]+)/);
+      const tgId = tgMatch ? tgMatch[1] : null;
+      nostockPending[orderNum] = { tgId };
+      await answerCb('Qaysi mahsulot tugdi?');
+      await removeButtons();
+      await sendMessage(cbChatId,
+        `<b>${orderNum}</b> — Qaysi mahsulot tugadi?\n\nShu xabarga <b>reply</b> qiling va mahsulot nomini yozing`,
+        { reply_markup: { force_reply: true, selective: false } }
+      );
+      return;
+    }
+    return;
+  }
+
+  const message = update?.message;
+  if (!message) return;
+
+  const chat_id = message.chat.id;
+  const from = message.from;
+  const text = message.text || '';
+  const isOwner = String(chat_id) === OWNER_ID;
+  const isGroup = String(chat_id) === GROUP_ID;
+
+  if (!isGroup) saveUser(from);
+
+  // ── GURUH ICHIDA REPLY ──
+  if (isGroup && message.reply_to_message) {
+    const replyText = message.reply_to_message.text || '';
+
+    const nostockMatch = replyText.match(/<b>(#[\S]+)<\/b> — Qaysi mahsulot tugadi/);
+    if (nostockMatch) {
+      const orderNum = nostockMatch[1];
+      const productName = text.trim();
+      const pending = nostockPending[orderNum];
+      if (pending?.tgId && productName) {
+        await sendMessage(pending.tgId, `😔 Kechirasiz, <b>${orderNum}</b> buyurtmangizdagi <b>${productName}</b> tugagan.\n\n+998990041166 ga murojaat qiling.`);
+        await sendMessage(GROUP_ID, `✅ Mijozga yuborildi: "${productName}" tugagan — ${orderNum}`);
+        delete nostockPending[orderNum];
+      }
+      return;
+    }
+
+    const orderStatusMatch = replyText.match(/📦 <b>(#[\S]+)<\/b> buyurtma holati qanday/);
+    if (orderStatusMatch) {
+      const orderNum = orderStatusMatch[1];
+      const pending = pendingOrderStatus[orderNum];
+      const adminReply = text.trim();
+      if (pending?.userId && adminReply) {
+        const aiReply = await askZeroMaksAI(`Admin aytdi: "${adminReply}". ${orderNum} buyurtma haqida foydalanuvchiga chiroyli xabar yoz. BUYURTMA_HOLATI tagini ishlatma.`, '', pending.userId);
+        const finalMsg = (aiReply && !aiReply.includes('BUYURTMA_HOLATI:')) ? aiReply : `📦 <b>${orderNum}</b> buyurtmangiz holati:\n\n${adminReply}`;
+        await sendMessage(pending.userId, finalMsg, { reply_markup: MAIN_MENU });
+        await sendMessage(GROUP_ID, `✅ ${pending.firstName} ga javob yuborildi.`);
+        delete pendingOrderStatus[orderNum];
+      }
+      return;
+    }
+    return;
+  }
+
+  // ── LOKATSIYA ──
+  if (message.location) {
+    const session = orderSessions[chat_id];
+    if (session && session.step === 'location') {
+      await processLocationStep(chat_id, message.location);
+    }
+    return;
+  }
+
+  // ── BEKOR QILISH TUGMASI ──
+  if (text === '❌ Bekor qilish') {
+    delete orderSessions[chat_id];
+    clearHistory(chat_id);
+    await sendMessage(chat_id, '❌ Bekor qilindi.', { reply_markup: MAIN_MENU });
+    return;
+  }
+
+  // ── ZAKAZ SESSION DAVOM ETISH ──
+  const session = orderSessions[chat_id];
+  if (session) {
+    if (session.step === 'items') { await processItemsStep(chat_id, text); return; }
+    if (session.step === 'name') { await processNameStep(chat_id, text); return; }
+    if (session.step === 'phone') { await processPhoneStep(chat_id, text); return; }
+    if (session.step === 'location') {
+      await sendMessage(chat_id, '📍 Iltimos, joylashuvingizni tugma orqali yuboring:', { reply_markup: LOCATION_KEYBOARD });
+      return;
+    }
+  }
+
+  // ── BOT EGASI ──
+  if (isOwner) {
+    // Foydalanuvchilar soni
+    if (text === '/users' || text.toLowerCase().includes('nechta foydalanuvchi')) {
+      const users = getAllUsers();
+      await sendMessage(OWNER_ID, `👥 <b>Jami foydalanuvchilar: ${users.length} ta</b>`, { reply_markup: MAIN_MENU });
+      return;
+    }
+
+    // Broadcast aniqlash
+    const intent = await detectBroadcastIntent(text);
+    if (intent?.intent === 'broadcast' && intent?.message) {
+      broadcastPending[OWNER_ID] = { fromChatId: chat_id, messageId: message.message_id };
+      const users = getAllUsers();
+      await sendMessage(OWNER_ID,
+        `📢 <b>Broadcast</b>\n\n"${intent.message}"\n\n👥 Foydalanuvchilar: ${users.length} ta\n\nYuborilaymi?`,
+        { reply_markup: { inline_keyboard: [[{ text: '✅ Ha, yubor', callback_data: 'broadcast_yes' }, { text: '❌ Bekor', callback_data: 'broadcast_no' }]] } }
+      );
+      return;
+    }
+
+    // Ega uchun maxsus AI (kuchli, admin kontekst bilan)
+    const aiReply = await askZeroMaksAI(text,
+      `Bu bot egasi va administratori. U botni boshqaradi. ` +
+      `Uning barcha buyruqlarini bajar: menyu haqida ma'lumot ber, statistika chiqar, ` +
+      `botni sozlash bo'yicha maslahat ber. Hech narsa rad etma.`,
+      OWNER_ID
+    );
+    await sendMessage(OWNER_ID, aiReply || 'AI hozirda ishlamaydi.', { reply_markup: MAIN_MENU });
+    return;
+  }
+
+  // ── ODDIY FOYDALANUVCHI ──
+  if (text === '/start' || text.startsWith('/start ')) {
+    clearHistory(chat_id);
+    await sendMessage(chat_id,
+      `Assalomu alaykum, <b>${from.first_name || 'do\'st'}!</b>\n\nMen <b>ZeroMaks AI</b> — aqlli yordamchingizman! 🤖🍕\n\nBuyurtma berish, menyu, narxlar va har qanday savol bo'yicha yordam beraman.\n\nShunchaki yozing — tushunaman! 💬`,
+      { reply_markup: { inline_keyboard: [[{ text: '🛒 Ilovani ochish', web_app: { url: APP_URL } }]] } }
+    );
+    await sendMessage(chat_id, 'Quyidagi menyudan foydalaning:', { reply_markup: MAIN_MENU });
+    return;
+  }
+
+  if (text === '🛒 Buyurtma berish') {
+    await startOrder(chat_id, from);
+    return;
+  }
+
+  if (text === '📦 Buyurtmam holati') {
+    await sendMessage(chat_id, 'Buyurtma raqamingizni yozing (masalan: #12345678)', { reply_markup: MAIN_MENU });
+    return;
+  }
+
+  if (text === '👨‍💻 Dasturchi bilan boglanish') {
+    await sendMessage(chat_id, '👨‍💻 <b>Dasturchi:</b> @xwSamandar', { reply_markup: MAIN_MENU });
+    return;
+  }
+
+  // ── ZEROMAKS AI ──
+  const aiResponse = await askZeroMaksAI(text, '', chat_id);
+  if (!aiResponse) {
+    await sendMessage(chat_id, 'Hozirda javob bera olmayapman. Keyinroq urinib ko\'ring.', { reply_markup: MAIN_MENU });
+    return;
+  }
+
+  if (aiResponse.includes('ZAKAZ_BOSHLASH')) {
+    await startOrder(chat_id, from);
+    return;
+  }
+
+  if (aiResponse.includes('BUYURTMA_HOLATI:')) {
+    const match = aiResponse.match(/BUYURTMA_HOLATI:(#[\S]+|NOMALUM)/);
+    const orderNum = match?.[1];
+    if (orderNum && orderNum !== 'NOMALUM') {
+      pendingOrderStatus[orderNum] = { userId: chat_id, firstName: from.first_name || 'Foydalanuvchi' };
+      await sendMessage(GROUP_ID,
+        `📦 <b>${orderNum}</b> buyurtma holati qanday?\n\n👤 ${from.first_name || ''} (ID: ${chat_id})\n\nShu xabarga <b>reply</b> qilib holat yozing`,
+        { reply_markup: { force_reply: true, selective: false } }
+      );
+      await sendMessage(chat_id, `🔍 <b>${orderNum}</b> holati so'raldi. Admin tez orada javob beradi! ⏳`, { reply_markup: MAIN_MENU });
+    } else {
+      await sendMessage(chat_id, 'Buyurtma raqamingizni yozing (masalan: #12345678)', { reply_markup: MAIN_MENU });
+    }
+    return;
+  }
+
+  await sendMessage(chat_id, aiResponse, { reply_markup: MAIN_MENU });
+});
+
+app.get('/health', (req, res) => res.send('Zero Maks Bot ishlayapti'));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server port ${PORT} da ishga tushdi`));
