@@ -6,11 +6,16 @@ app.use(express.json());
 
 app.use(express.static(path.join(__dirname)));
 
-const BOT_TOKEN = '8767223581:AAHcaekUAnascE8YnM1jaTlJzRPxbC_gNMM';
+const BOT_TOKEN = process.env.BOT_TOKEN || '8767223581:AAHcaekUAnascE8YnM1jaTlJzRPxbC_gNMM';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyD3wnPJzOL5jei3hfrjFZ6vD5rYOziTrKo';
 const APP_URL = 'https://t.me/ZeroMaxxbot/ilovasi';
-const ADMIN_PASSWORD = 'zeromaks2026';
-const API = 'https://api.telegram.org/bot' + BOT_TOKEN;
+const API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+const GEMINI_API = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
 
+const OWNER_ID = '1200329840';
+const GROUP_ID = '-1003511488835';
+
+// ===================== DATABASE =====================
 const DB_FILE = './db.json';
 
 function loadDB() {
@@ -39,23 +44,15 @@ function getAllUsers() {
   return Object.values(loadDB().users);
 }
 
-function getAdminState(chat_id) {
-  return loadDB().adminState[String(chat_id)] || null;
-}
+// ===================== PENDING STATES =====================
+const pendingOrderStatus = {};
+const nostockPending = {};
+const broadcastPending = {};
 
-function setAdminState(chat_id, state) {
-  const db = loadDB();
-  if (state === null) {
-    delete db.adminState[String(chat_id)];
-  } else {
-    db.adminState[String(chat_id)] = state;
-  }
-  saveDB(db);
-}
-
-async function sendMessage(chat_id, text, extra) {
-  const body = Object.assign({ chat_id: chat_id, text: text, parse_mode: 'HTML' }, extra || {});
-  const res = await fetch(API + '/sendMessage', {
+// ===================== TELEGRAM API =====================
+async function sendMessage(chat_id, text, extra = {}) {
+  const body = { chat_id, text, parse_mode: 'HTML', ...extra };
+  const res = await fetch(`${API}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -64,223 +61,288 @@ async function sendMessage(chat_id, text, extra) {
 }
 
 async function copyMessage(chat_id, from_chat_id, message_id) {
-  const res = await fetch(API + '/copyMessage', {
+  const res = await fetch(`${API}/copyMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chat_id, from_chat_id: from_chat_id, message_id: message_id })
+    body: JSON.stringify({ chat_id, from_chat_id, message_id })
   });
   return res.json();
 }
 
+// ===================== ZEROMAKS AI (GEMINI) =====================
+async function askZeroMaksAI(userMessage, context = '') {
+  const systemPrompt = `Sen ZeroMaks nomli aqlli yordamchisan. Zero Maks — Toshkentdagi mahalliy ovqat yetkazib berish xizmati.
+
+Vazifang:
+- Foydalanuvchilar savollariga do'stona, qisqa (2-3 jumla) o'zbek tilida javob ber
+- Buyurtma holati so'ralsa buyurtma raqamini aniqla
+
+MUHIM: Agar buyurtma holati so'ralsa, javobingda "BUYURTMA_HOLATI:#RAQAM" yoz.
+Raqam noma'lum bo'lsa: "BUYURTMA_HOLATI:NOMALUM"
+
+${context ? 'Qoshimcha: ' + context : ''}`;
+
+  try {
+    const res = await fetch(GEMINI_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ parts: [{ text: userMessage }] }],
+        generationConfig: { maxOutputTokens: 400, temperature: 0.7 }
+      })
+    });
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  } catch(e) {
+    console.error('Gemini xato:', e.message);
+    return null;
+  }
+}
+
+async function detectBroadcastIntent(text) {
+  try {
+    const res = await fetch(GEMINI_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: `Foydalanuvchi xabarining niyatini aniqla. FAQAT JSON qaytар (boshqa hech narsa yozma):
+{"intent":"broadcast","message":"yuboriladigan matn"} — agar barcha foydalanuvchilarga xabar yubormoqchi bolsa
+{"intent":"other"} — boshqa holatlarda
+Broadcast misollari: "barchaga yubor", "hammaga de", "elon qil", "xabar yubor"` }] },
+        contents: [{ parts: [{ text }] }],
+        generationConfig: { maxOutputTokens: 200, temperature: 0.1 }
+      })
+    });
+    const data = await res.json();
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{"intent":"other"}';
+    return JSON.parse(raw.replace(/```json|```/g, '').trim());
+  } catch(e) {
+    return { intent: 'other' };
+  }
+}
+
+// ===================== MAIN MENU =====================
 const MAIN_MENU = {
   keyboard: [
+    [{ text: '🛒 Buyurtma berish' }, { text: '📦 Buyurtmam holati' }],
     [{ text: '👨‍💻 Dasturchi bilan boglanish' }]
   ],
   resize_keyboard: true,
   persistent: true
 };
 
-async function answerCallback(callback_query_id, text) {
-  await fetch(API + '/answerCallbackQuery', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callback_query_id, text: text || '' })
-  });
-}
-
-async function editMessageReplyMarkup(chat_id, message_id) {
-  await fetch(API + '/editMessageReplyMarkup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id, message_id, reply_markup: { inline_keyboard: [] } })
-  }).catch(() => {});
-}
-
-async function sendToUser(tgId, text) {
-  if (!tgId) return;
-  await fetch(API + '/sendMessage', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: tgId, text })
-  }).catch(() => {});
-}
-
-app.post('/webhook', async function(req, res) {
+// ===================== WEBHOOK =====================
+app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
   const update = req.body;
 
-  // ====== CALLBACK QUERY HANDLER ======
-  if (update.callback_query) {
+  // ── CALLBACK QUERY ──
+  if (update?.callback_query) {
     const cb = update.callback_query;
     const data = cb.data || '';
-    const cbChatId = cb.message && cb.message.chat && cb.message.chat.id;
-    const msgId = cb.message && cb.message.message_id;
+    const cbChatId = cb.message?.chat?.id;
+    const cbMsgId = cb.message?.message_id;
 
-    // tgId ni xabar matnidan olamiz
-    const msgText = (cb.message && (cb.message.caption || cb.message.text)) || '';
-    const tgMatch = msgText.match(/Telegram ID[:\s]+([0-9]+)/);
-    const tgId = tgMatch ? tgMatch[1] : null;
-
-    // Buyurtma raqamini olamiz
-    const orderMatch = msgText.match(/#([0-9]+)/);
-    const orderNum = orderMatch ? '#' + orderMatch[1] : null;
-
-    const statusMsgMap = {
-      confirmed: `✅ Buyurtmangiz ${orderNum} tasdiqlandi! Tayyorlanmoqda 👨‍🍳`,
-      rejected:  `❌ Afsuski, buyurtmangiz ${orderNum} rad etildi.`,
-      delivering:`🚚 Buyurtmangiz ${orderNum} chiqib ketti! Biroz kuting 🕐`,
-      done:      `✅ Buyurtmangiz ${orderNum} yetib keldi! Ishtaha bo'lsin! 🍔`,
-      unavailable:`😔 Buyurtmangiz ${orderNum} da ba'zi mahsulotlar qolmagan.`,
+    const answerCb = async (text) => {
+      await fetch(`${API}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cb.id, text })
+      });
+    };
+    const removeButtons = async () => {
+      await fetch(`${API}/editMessageReplyMarkup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: cbChatId, message_id: cbMsgId, reply_markup: { inline_keyboard: [] } })
+      });
     };
 
-    let action = null;
-
-    if (data.startsWith('pay_ok_')) {
-      action = 'confirmed';
-    } else if (data.startsWith('pay_rej_')) {
-      action = 'rejected';
-    } else if (data.startsWith('confirm_')) {
-      action = 'confirmed';
-    } else if (data.startsWith('reject_')) {
-      action = 'rejected';
-    } else if (data.startsWith('deliver_')) {
-      action = 'delivering';
-    } else if (data.startsWith('unavail_') || data.startsWith('nostock_')) {
-      action = 'unavailable';
+    if (data === 'broadcast_yes') {
+      const pending = broadcastPending[OWNER_ID];
+      if (!pending) return;
+      await answerCb('Yuborilmoqda...');
+      await removeButtons();
+      const users = getAllUsers();
+      let success = 0, failed = 0;
+      for (const user of users) {
+        if (String(user.id) === OWNER_ID) { success++; continue; }
+        try {
+          const r = await copyMessage(user.id, pending.fromChatId, pending.messageId);
+          if (r.ok) success++; else failed++;
+        } catch(e) { failed++; }
+        await new Promise(r => setTimeout(r, 50));
+      }
+      await sendMessage(OWNER_ID,
+        `✅ <b>Yuborildi!</b>\n\n👥 Jami: ${users.length}\n✅ Muvaffaqiyatli: ${success}\n❌ Xato: ${failed}`,
+        { reply_markup: MAIN_MENU }
+      );
+      delete broadcastPending[OWNER_ID];
+      return;
     }
 
-    if (action) {
-      // Foydalanuvchiga xabar yuborish
-      if (tgId && statusMsgMap[action]) {
-        await sendToUser(tgId, statusMsgMap[action]);
-      }
-      // Callback ga javob berish (yuklash ko'rsatkichini o'chirish)
-      await answerCallback(cb.id, action === 'confirmed' ? '✅ Tasdiqlandi' : action === 'rejected' ? '❌ Rad etildi' : '✔️ Bajarildi');
-      // Tugmalarni o'chirish
-      if (cbChatId && msgId) {
-        await editMessageReplyMarkup(cbChatId, msgId);
-      }
-      // Guruhga status xabari
-      if (cbChatId) {
-        const adminMsg = {
-          confirmed: `✅ <b>TASDIQLANDI</b> — ${orderNum}`,
-          rejected:  `❌ <b>RAD ETILDI</b> — ${orderNum}`,
-          delivering:`🚚 <b>CHIQIB KETTI</b> — ${orderNum}`,
-          done:      `✅ <b>YETKAZILDI</b> — ${orderNum}`,
-          unavailable:`😔 <b>MAHSULOT QOLMAGAN</b> — ${orderNum}`,
-        };
-        await sendMessage(cbChatId, adminMsg[action] || `✔️ ${orderNum} — ${action}`, {});
-      }
-    } else {
-      await answerCallback(cb.id, '');
+    if (data === 'broadcast_no') {
+      await answerCb('Bekor qilindi');
+      await removeButtons();
+      delete broadcastPending[OWNER_ID];
+      await sendMessage(OWNER_ID, 'Bekor qilindi.', { reply_markup: MAIN_MENU });
+      return;
+    }
+
+    if (data.startsWith('nostock_')) {
+      const orderNum = data.replace('nostock_', '');
+      const msgText = cb.message?.text || '';
+      const tgMatch = msgText.match(/ID[:\s]+([0-9]+)/);
+      const tgId = tgMatch ? tgMatch[1] : null;
+      nostockPending[orderNum] = { tgId };
+      await answerCb('Qaysi mahsulot tugdi?');
+      await removeButtons();
+      await sendMessage(cbChatId,
+        `<b>${orderNum}</b> — Qaysi mahsulot tugadi?\n\nShu xabarga <b>reply</b> qiling va mahsulot nomini yozing`,
+        { reply_markup: { force_reply: true, selective: false } }
+      );
+      return;
     }
     return;
   }
-  // ====================================
 
-  const message = update && update.message;
+  const message = update?.message;
   if (!message) return;
 
   const chat_id = message.chat.id;
   const from = message.from;
   const text = message.text || '';
-  const state = getAdminState(chat_id);
+  const isOwner = String(chat_id) === OWNER_ID;
+  const isGroup = String(chat_id) === GROUP_ID;
 
-  saveUser(from);
+  if (!isGroup) saveUser(from);
 
-  if (text === '/start' || text.indexOf('/start ') === 0) {
-    await sendMessage(
-      chat_id,
-      '<b>Assalomu alaykum, ' + (from.first_name || 'doest') + '!</b>\n\nZero Maks ilovasiga xush kelibsiz!\n\nOnlayn buyurtma berish uchun quyidagi tugmani bosing',
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '🛒 Ilovani ochish', web_app: { url: APP_URL } }
-          ]]
-        }
+  // ── GURUH ICHIDA REPLY ──
+  if (isGroup && message.reply_to_message) {
+    const replyText = message.reply_to_message.text || '';
+
+    const nostockMatch = replyText.match(/<b>(#[\S]+)<\/b> — Qaysi mahsulot tugadi/);
+    if (nostockMatch) {
+      const orderNum = nostockMatch[1];
+      const productName = text.trim();
+      const pending = nostockPending[orderNum];
+      if (pending?.tgId && productName) {
+        await sendMessage(pending.tgId,
+          `😔 Kechirasiz, <b>${orderNum}</b> buyurtmangizdagi <b>${productName}</b> tugagan.\n\n+998990041166 ga murojaat qilib almashtiring yoki pulingizni qaytaring.`
+        );
+        await sendMessage(GROUP_ID, `✅ Mijozga yuborildi: "${productName}" tugagan — ${orderNum}`);
+        delete nostockPending[orderNum];
       }
+      return;
+    }
+
+    const orderStatusMatch = replyText.match(/📦 <b>(#[\S]+)<\/b> buyurtma holati qanday/);
+    if (orderStatusMatch) {
+      const orderNum = orderStatusMatch[1];
+      const pending = pendingOrderStatus[orderNum];
+      const adminReply = text.trim();
+      if (pending?.userId && adminReply) {
+        const aiReply = await askZeroMaksAI(
+          `Admin aytdi: "${adminReply}". ${orderNum} buyurtma haqida foydalanuvchiga chiroyli xabar yoz. BUYURTMA_HOLATI tagini ishlatma.`
+        );
+        const finalMsg = (aiReply && !aiReply.includes('BUYURTMA_HOLATI:'))
+          ? aiReply
+          : `📦 <b>${orderNum}</b> buyurtmangiz holati:\n\n${adminReply}`;
+        await sendMessage(pending.userId, finalMsg, { reply_markup: MAIN_MENU });
+        await sendMessage(GROUP_ID, `✅ ${pending.firstName} ga javob yuborildi.`);
+        delete pendingOrderStatus[orderNum];
+      }
+      return;
+    }
+    return;
+  }
+
+  // ── BOT EGASI ──
+  if (isOwner) {
+    const intent = await detectBroadcastIntent(text);
+    if (intent?.intent === 'broadcast' && intent?.message) {
+      broadcastPending[OWNER_ID] = { fromChatId: chat_id, messageId: message.message_id };
+      const users = getAllUsers();
+      await sendMessage(OWNER_ID,
+        `📢 <b>Broadcast</b>\n\nYuboriladigan xabar:\n\n"${intent.message}"\n\n👥 Foydalanuvchilar: ${users.length} ta\n\nYuborilaymi?`,
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '✅ Ha, yubor', callback_data: 'broadcast_yes' },
+              { text: '❌ Bekor', callback_data: 'broadcast_no' }
+            ]]
+          }
+        }
+      );
+      return;
+    }
+    const aiReply = await askZeroMaksAI(text, 'Bu bot egasi.');
+    await sendMessage(OWNER_ID, aiReply || 'AI hozirda ishlamaydi.', { reply_markup: MAIN_MENU });
+    return;
+  }
+
+  // ── ODDIY FOYDALANUVCHI ──
+
+  if (text === '/start' || text.startsWith('/start ')) {
+    await sendMessage(chat_id,
+      `Assalomu alaykum, <b>${from.first_name || 'do\'st'}!</b>\n\nMen <b>ZeroMaks AI</b> yordamchisiman! Buyurtma, menyu va har qanday savol bo'yicha yordam beraman 🍕`,
+      { reply_markup: { inline_keyboard: [[{ text: '🛒 Ilovani ochish', web_app: { url: APP_URL } }]] } }
     );
-    await sendMessage(chat_id, 'Quyidagi menyudan foydalaning:', {
-      reply_markup: MAIN_MENU
+    await sendMessage(chat_id, 'Quyidagi menyudan foydalaning:', { reply_markup: MAIN_MENU });
+    return;
+  }
+
+  if (text === '🛒 Buyurtma berish') {
+    await sendMessage(chat_id, 'Buyurtma berish uchun ilovani oching:', {
+      reply_markup: { inline_keyboard: [[{ text: '🛒 Ilovani ochish', web_app: { url: APP_URL } }]] }
     });
     return;
   }
 
-  if (state === 'wait_password') {
-    if (text === '❌ Bekor qilish') {
-      setAdminState(chat_id, null);
-      await sendMessage(chat_id, 'Bekor qilindi.', { reply_markup: MAIN_MENU });
-      return;
-    }
-    if (text === ADMIN_PASSWORD) {
-      setAdminState(chat_id, 'wait_broadcast');
-      await sendMessage(chat_id, '✅ <b>Parol togri!</b>\n\nYuboriladigan xabarni yozing yoki rasm/video yuboring.\nBarcha foydalanuvchilarga tarqatiladi', {
-        reply_markup: {
-          keyboard: [[{ text: '❌ Bekor qilish' }]],
-          resize_keyboard: true
-        }
-      });
-    } else {
-      setAdminState(chat_id, null);
-      await sendMessage(chat_id, '❌ <b>Parol notogri!</b>', { reply_markup: MAIN_MENU });
-    }
-    return;
-  }
-
-  if (state === 'wait_broadcast') {
-    if (text === '❌ Bekor qilish') {
-      setAdminState(chat_id, null);
-      await sendMessage(chat_id, 'Bekor qilindi.', { reply_markup: MAIN_MENU });
-      return;
-    }
-
-    setAdminState(chat_id, null);
-    const users = getAllUsers();
-    let success = 0, failed = 0;
-
-    await sendMessage(chat_id, 'Yuborilmoqda... (' + users.length + ' ta foydalanuvchi)');
-
-    for (let i = 0; i < users.length; i++) {
-      const user = users[i];
-      if (String(user.id) === String(chat_id)) { success++; continue; }
-      try {
-        const r = await copyMessage(user.id, chat_id, message.message_id);
-        if (r.ok) success++;
-        else failed++;
-      } catch(e) { failed++; }
-      await new Promise(function(r) { setTimeout(r, 50); });
-    }
-
-    await sendMessage(
-      chat_id,
-      '✅ <b>Xabar tarqatildi!</b>\n\nJami: ' + users.length + ' ta\nYuborildi: ' + success + ' ta\nXato: ' + failed + ' ta',
-      { reply_markup: MAIN_MENU }
-    );
+  if (text === '📦 Buyurtmam holati') {
+    await sendMessage(chat_id, 'Buyurtma raqamingizni yozing (masalan: #12345678)', { reply_markup: MAIN_MENU });
     return;
   }
 
   if (text === '👨‍💻 Dasturchi bilan boglanish') {
-    await sendMessage(
-      chat_id,
-      '👨‍💻 <b>Dasturchi:</b> @xwSamandar\n\nHar qanday savol yoki taklif uchun murojaat qiling!',
-      { reply_markup: MAIN_MENU }
-    );
+    await sendMessage(chat_id, '👨‍💻 <b>Dasturchi:</b> @xwSamandar', { reply_markup: MAIN_MENU });
     return;
   }
 
-  if (text === '❌ Bekor qilish') {
-    setAdminState(chat_id, null);
-    await sendMessage(chat_id, 'Bekor qilindi.', { reply_markup: MAIN_MENU });
+  // ── ZEROMAKS AI ──
+  const aiResponse = await askZeroMaksAI(text);
+
+  if (!aiResponse) {
+    await sendMessage(chat_id, 'Hozirda javob bera olmayapman. Keyinroq urinib koring.', { reply_markup: MAIN_MENU });
     return;
   }
+
+  if (aiResponse.includes('BUYURTMA_HOLATI:')) {
+    const match = aiResponse.match(/BUYURTMA_HOLATI:(#[\S]+|NOMALUM)/);
+    const orderNum = match?.[1];
+
+    if (orderNum && orderNum !== 'NOMALUM') {
+      pendingOrderStatus[orderNum] = { userId: chat_id, firstName: from.first_name || 'Foydalanuvchi' };
+      await sendMessage(GROUP_ID,
+        `📦 <b>${orderNum}</b> buyurtma holati qanday?\n\n👤 ${from.first_name || ''} (ID: ${chat_id})\n\nShu xabarga <b>reply</b> qilib holat yozing`,
+        { reply_markup: { force_reply: true, selective: false } }
+      );
+      await sendMessage(chat_id,
+        `🔍 <b>${orderNum}</b> holati so'raldi. Admin tez orada javob beradi! ⏳`,
+        { reply_markup: MAIN_MENU }
+      );
+    } else {
+      await sendMessage(chat_id, 'Buyurtma raqamingizni yozing (masalan: #12345678)', { reply_markup: MAIN_MENU });
+    }
+    return;
+  }
+
+  await sendMessage(chat_id, aiResponse, { reply_markup: MAIN_MENU });
 });
 
-app.get('/health', function(req, res) {
-  res.send('Zero Maks Bot ishlaypti');
-});
+app.get('/health', (req, res) => res.send('Zero Maks Bot ishlayapti'));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, function() {
-  console.log('Server port ' + PORT + ' da ishga tushdi');
-});
+app.listen(PORT, () => console.log(`Server port ${PORT} da ishga tushdi`));
