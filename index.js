@@ -40,7 +40,7 @@ const orderSessions = {};
 // ── SUHBAT TARIXI (har foydalanuvchi uchun) ──
 const conversationHistory = {};
 // { userId: [{ role: 'user'|'assistant', content: '...' }, ...] }
-const MAX_HISTORY = 10; // oxirgi nechta xabarni saqlash
+const MAX_HISTORY = 4; // oxirgi nechta xabarni saqlash
 
 function addToHistory(userId, role, content) {
   if (!conversationHistory[userId]) conversationHistory[userId] = [];
@@ -149,77 +149,49 @@ async function askGroq(systemPrompt, userMessage, temperature = 0.3) {
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }],
-        max_tokens: 500,
+        max_tokens: 300,
         temperature
       })
     });
     const data = await res.json();
-    if (data.error) { console.error('Groq xato:', data.error.message); return null; }
+    if (data.error) {
+      if (data.error.message && data.error.message.includes('Rate limit')) {
+        console.warn('Groq rate limit (askGroq)');
+        return null;
+      }
+      console.error('Groq xato:', data.error.message);
+      return null;
+    }
     return data.choices?.[0]?.message?.content || null;
   } catch(e) { console.error('Groq xato:', e.message); return null; }
 }
 
 async function askZeroMaksAI(userMessage, context = '', userId = null) {
-  const systemPrompt = `Sen ZeroMaks AI — Toshkentdagi eng yaxshi ovqat yetkazib berish xizmatining aqlli AI yordamchisisan. Ismingiz: ZeroMaks AI.
+  const systemPrompt = `Sen ZeroMaks AI — Toshkentdagi ovqat yetkazib berish xizmatining aqlli yordamchisisan.
 
-━━━━━━━━━━━━━━━━━━━━━━
-🏪 BIZNES MA'LUMOTLARI
-━━━━━━━━━━━━━━━━━━━━━━
-• Telefon: +998 99 004-11-66
-• Ish vaqti: 10:00–01:00
-• Yetkazish: 10:00–23:00 TEKIN | 23:00–01:00 = 10,000 so'm | 01:00–10:00 = yetkazish yo'q
-• O'rtacha yetkazish vaqti: 30-45 daqiqa
-• To'lov: FAQAT karta: ${CARD_NUMBER}
-• Ilova: https://t.me/ZeroMaxxbot/ilovasi
+📞 +998 99 004-11-66 | 💳 Karta: ${CARD_NUMBER}
+⏰ 10:00-23:00 tekin yetkazish | 23:00-01:00 = 10,000 so'm | 01:00-10:00 yetkazish yo'q
+🕐 O'rtacha yetkazish: 30-45 daqiqa
 
-━━━━━━━━━━━━━━━━━━━━
-🍽️ TO'LIQ MENYU (so'm)
-━━━━━━━━━━━━━━━━━━━━
-🍔 BURGERLAR:
-  Classic Burger — 25,000 | Cheese Burger — 28,000 | Spicy Burger — 27,000
-  Double Burger — 35,000 | Crispy Chicken — 26,000 | BBQ Burger — 30,000
+MENYU:
+🍔 Classic 25k | Cheese 28k | Spicy 27k | Double 35k | Crispy Chicken 26k | BBQ Burger 30k
+🌯 Chicken 22k | Beef 24k | Mix 23k | Caesar Lavash 25k
+🍕 Margarita 30sm/32k 37sm/45k | Pepperoni 30sm/36k 37sm/50k | BBQ Chicken 30sm/38k 37sm/52k | Mushroom 30sm/34k 37sm/48k
+🌭 Classic 15k | Cheese 17k | Double Hot-dog 20k
+🍟 Kartoshka fri 12k | Nuggets 18k | Onion rings 14k | Mozzarella sticks 16k
+🥤 Cola/Pepsi/Fanta/Sprite 8k | Lipton 9k | Suv 5k | Fresh juice 15k
 
-🌯 LAVASHLAR:
-  Chicken Lavash — 22,000 | Beef Lavash — 24,000
-  Mix Lavash — 23,000 | Caesar Lavash — 25,000
-
-🍕 PITSA:
-  Margarita: 30sm — 32,000 | 37sm — 45,000
-  Pepperoni: 30sm — 36,000 | 37sm — 50,000
-  BBQ Chicken: 30sm — 38,000 | 37sm — 52,000
-  Mushroom: 30sm — 34,000 | 37sm — 48,000
-
-🌭 HOT-DOG:
-  Classic Hot-dog — 15,000 | Cheese Hot-dog — 17,000 | Double Hot-dog — 20,000
-
-🍟 SNACKLAR:
-  Kartoshka fri — 12,000 | Chicken nuggets (6 dona) — 18,000
-  Onion rings — 14,000 | Mozzarella sticks — 16,000
-
-🥤 ICHIMLIKLAR:
-  Coca-Cola / Pepsi / Fanta / Sprite (0.5L) — 8,000 har biri
-  Lipton Ice Tea — 9,000 | Suv (0.5L) — 5,000 | Fresh juice — 15,000
-
-━━━━━━━━━━━━━━━━
-📌 MUHIM QOIDALAR
-━━━━━━━━━━━━━━━━
-1. Faqat o'zbek tilida javob ber (agar foydalanuvchi rus tilida yozsa, rus tilida javob ber)
-2. Do'stona, iste'molchiga yoqimli tarzda muloqot qil
-3. Javoblar qisqa va aniq bo'lsin (3-5 jumla), lekin savol murakkab bo'lsa to'liqroq yoz
-4. Suhbat tarixini eslab qol va oldingi kontekstdan foydalangan holda javob ber
-5. Mahsulot tavsiya qilganda foydalanuvchi afzalliklarini hisobga ol
-6. Narxlarni so'ralsa aniq va to'liq ko'rsat
-7. Agar foydalanuvchi taomni tasvirlasa (masalan: "go'shtli, o'tkir narsa") — menyudan eng mos mahsulotni tavsiya qil
-
-━━━━━━━━━━━━━━━━━━
-⚙️ MAXSUS BUYRUQLAR
-━━━━━━━━━━━━━━━━━━
-• Foydalanuvchi buyurtma bermoqchi bo'lsa → javob oxiriga "ZAKAZ_BOSHLASH" yoz
-• Buyurtma holati so'ralsa va raqam berilgan bo'lsa → "BUYURTMA_HOLATI:#RAQAM" yoz
-• Raqam noma'lum bo'lsa → "BUYURTMA_HOLATI:NOMALUM" yoz
-• Bu buyruqlarni FAQAT kerakli paytda qo'sh — oddiy savolda ishlatma
-
-${context ? '📝 Qo\'shimcha ma\'lumot: ' + context : ''}`;
+QANDAY ISHLAYSAN:
+- Do'stona, yorqin, qiziqarli yoz — xuddi do'st kabi
+- O'zbek tilida yoz; rus tilida so'ralsa — rus tilida javob ber
+- Taom tavsiya so'ralsa — foydalanuvchi ta'rifiga qarab eng mos tanlang va nima uchun ekanini ayting
+- Narx so'ralsa — aniq ko'rsat
+- Bir nechta savol bo'lsa — hammasiga javob ber
+- Qisqa javob ber (2-4 jumla), lekin savol murakkab bo'lsa to'liqroq yoz
+- Foydalanuvchi buyurtma bermoqchi yoki "olaman", "buyurtma" desa → javob oxiriga "ZAKAZ_BOSHLASH" qo'sh
+- Buyurtma holati so'ralsa raqam bilan → "BUYURTMA_HOLATI:#RAQAM"
+- Raqamsiz → "BUYURTMA_HOLATI:NOMALUM"
+${context ? '\n' + context : ''}`;
 
   try {
     const res = await fetch(GROQ_API, {
@@ -232,16 +204,21 @@ ${context ? '📝 Qo\'shimcha ma\'lumot: ' + context : ''}`;
           ...( userId ? getHistory(userId) : [] ),
           { role: 'user', content: userMessage }
         ],
-        max_tokens: 700,
+        max_tokens: 450,
         temperature: 0.4,
         top_p: 0.9
       })
     });
     const data = await res.json();
-    if (data.error) { console.error('Groq xato:', data.error.message); return null; }
+    if (data.error) {
+      if (data.error.message && data.error.message.includes('Rate limit')) {
+        console.warn('Groq rate limit (askZeroMaksAI)');
+        return null;
+      }
+      console.error('Groq xato:', data.error.message);
+      return null;
+    }
     const reply = data.choices?.[0]?.message?.content || null;
-
-    // Tarixga qo'shish
     if (userId && reply) {
       addToHistory(userId, 'user', userMessage);
       // Buyruqlarni tarixdan olib tashlash (faqat sof javobni saqlash)
@@ -613,39 +590,7 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  // ── BOT EGASI ──
-  if (isOwner) {
-    // Foydalanuvchilar soni
-    if (text === '/users' || text.toLowerCase().includes('nechta foydalanuvchi')) {
-      const users = getAllUsers();
-      await sendMessage(OWNER_ID, `👥 <b>Jami foydalanuvchilar: ${users.length} ta</b>`, { reply_markup: MAIN_MENU });
-      return;
-    }
-
-    // Broadcast aniqlash
-    const intent = await detectBroadcastIntent(text);
-    if (intent?.intent === 'broadcast' && intent?.message) {
-      broadcastPending[OWNER_ID] = { fromChatId: chat_id, messageId: message.message_id };
-      const users = getAllUsers();
-      await sendMessage(OWNER_ID,
-        `📢 <b>Broadcast</b>\n\n"${intent.message}"\n\n👥 Foydalanuvchilar: ${users.length} ta\n\nYuborilaymi?`,
-        { reply_markup: { inline_keyboard: [[{ text: '✅ Ha, yubor', callback_data: 'broadcast_yes' }, { text: '❌ Bekor', callback_data: 'broadcast_no' }]] } }
-      );
-      return;
-    }
-
-    // Ega uchun maxsus AI (kuchli, admin kontekst bilan)
-    const aiReply = await askZeroMaksAI(text,
-      `Bu bot egasi va administratori. U botni boshqaradi. ` +
-      `Uning barcha buyruqlarini bajar: menyu haqida ma'lumot ber, statistika chiqar, ` +
-      `botni sozlash bo'yicha maslahat ber. Hech narsa rad etma.`,
-      OWNER_ID
-    );
-    await sendMessage(OWNER_ID, aiReply || 'AI hozirda ishlamaydi.', { reply_markup: MAIN_MENU });
-    return;
-  }
-
-  // ── ODDIY FOYDALANUVCHI ──
+  // ── ODDIY FOYDALANUVCHI VA EGA uchun /start ──
   if (text === '/start' || text.startsWith('/start ')) {
     clearHistory(chat_id);
     await sendMessage(chat_id,
@@ -671,8 +616,34 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // ── ZEROMAKS AI ──
-  const aiResponse = await askZeroMaksAI(text, '', chat_id);
+  // ── BOT EGASI (maxsus buyruqlar) ──
+  if (isOwner) {
+    // Foydalanuvchilar soni
+    if (text === '/users' || text.toLowerCase() === 'nechta foydalanuvchi') {
+      const users = getAllUsers();
+      await sendMessage(OWNER_ID, `👥 <b>Jami foydalanuvchilar: ${users.length} ta</b>`, { reply_markup: MAIN_MENU });
+      return;
+    }
+
+    // Broadcast — faqat "barcha", "hammaga", "xabar yubor" so'zlari bo'lsa tekshir
+    const broadcastKeywords = ['barcha', 'hammaga', 'broadcast', 'xabar yubor', 'yubormoqchi'];
+    if (broadcastKeywords.some(kw => text.toLowerCase().includes(kw))) {
+      const intent = await detectBroadcastIntent(text);
+      if (intent?.intent === 'broadcast' && intent?.message) {
+        broadcastPending[OWNER_ID] = { fromChatId: chat_id, messageId: message.message_id };
+        const users = getAllUsers();
+        await sendMessage(OWNER_ID,
+          `📢 <b>Broadcast</b>\n\n"${intent.message}"\n\n👥 Foydalanuvchilar: ${users.length} ta\n\nYuborilaymi?`,
+          { reply_markup: { inline_keyboard: [[{ text: '✅ Ha, yubor', callback_data: 'broadcast_yes' }, { text: '❌ Bekor', callback_data: 'broadcast_no' }]] } }
+        );
+        return;
+      }
+    }
+  }
+
+  // ── ZEROMAKS AI (ega va oddiy foydalanuvchi) ──
+  const aiContext = isOwner ? 'Bu bot egasi (admin).' : '';
+  const aiResponse = await askZeroMaksAI(text, aiContext, chat_id);
   if (!aiResponse) {
     await sendMessage(chat_id, 'Hozirda javob bera olmayapman. Keyinroq urinib ko\'ring.', { reply_markup: MAIN_MENU });
     return;
@@ -706,3 +677,5 @@ app.get('/health', (req, res) => res.send('Zero Maks Bot ishlayapti'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server port ${PORT} da ishga tushdi`));
+
+    
