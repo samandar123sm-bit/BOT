@@ -7,7 +7,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '8767223581:AAHcaekUAnascE8YnM1jaTlJzRPxbC_gNMM';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyD3wnPJzOL5jei3hfrjFZ6vD5rYOziTrKo';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDT_dzuyqxtW-aUT8pP3HcLXkL_Iheokzs';
 const APP_URL = 'https://t.me/ZeroMaxxbot/ilovasi';
 const API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const GEMINI_API = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -51,22 +51,32 @@ const broadcastPending = {};
 
 // ===================== TELEGRAM API =====================
 async function sendMessage(chat_id, text, extra = {}) {
-  const body = { chat_id, text, parse_mode: 'HTML', ...extra };
-  const res = await fetch(`${API}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  return res.json();
+  try {
+    const body = { chat_id, text, parse_mode: 'HTML', ...extra };
+    const res = await fetch(`${API}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    return res.json();
+  } catch(e) {
+    console.error('sendMessage xato:', e.message);
+    return null;
+  }
 }
 
 async function copyMessage(chat_id, from_chat_id, message_id) {
-  const res = await fetch(`${API}/copyMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id, from_chat_id, message_id })
-  });
-  return res.json();
+  try {
+    const res = await fetch(`${API}/copyMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id, from_chat_id, message_id })
+    });
+    return res.json();
+  } catch(e) {
+    console.error('copyMessage xato:', e.message);
+    return { ok: false };
+  }
 }
 
 // ===================== ZEROMAKS AI (GEMINI) =====================
@@ -88,11 +98,18 @@ ${context ? 'Qoshimcha: ' + context : ''}`;
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ parts: [{ text: userMessage }] }],
+        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
         generationConfig: { maxOutputTokens: 400, temperature: 0.7 }
       })
     });
     const data = await res.json();
+
+    // API xatosini tekshirish
+    if (data.error) {
+      console.error('Gemini API xato:', data.error.message);
+      return null;
+    }
+
     return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
   } catch(e) {
     console.error('Gemini xato:', e.message);
@@ -110,11 +127,17 @@ async function detectBroadcastIntent(text) {
 {"intent":"broadcast","message":"yuboriladigan matn"} — agar barcha foydalanuvchilarga xabar yubormoqchi bolsa
 {"intent":"other"} — boshqa holatlarda
 Broadcast misollari: "barchaga yubor", "hammaga de", "elon qil", "xabar yubor"` }] },
-        contents: [{ parts: [{ text }] }],
+        contents: [{ role: 'user', parts: [{ text }] }],
         generationConfig: { maxOutputTokens: 200, temperature: 0.1 }
       })
     });
     const data = await res.json();
+
+    if (data.error) {
+      console.error('Gemini broadcast xato:', data.error.message);
+      return { intent: 'other' };
+    }
+
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{"intent":"other"}';
     return JSON.parse(raw.replace(/```json|```/g, '').trim());
   } catch(e) {
@@ -171,7 +194,7 @@ app.post('/webhook', async (req, res) => {
         if (String(user.id) === OWNER_ID) { success++; continue; }
         try {
           const r = await copyMessage(user.id, pending.fromChatId, pending.messageId);
-          if (r.ok) success++; else failed++;
+          if (r && r.ok) success++; else failed++;
         } catch(e) { failed++; }
         await new Promise(r => setTimeout(r, 50));
       }
@@ -315,7 +338,7 @@ app.post('/webhook', async (req, res) => {
   const aiResponse = await askZeroMaksAI(text);
 
   if (!aiResponse) {
-    await sendMessage(chat_id, 'Hozirda javob bera olmayapman. Keyinroq urinib koring.', { reply_markup: MAIN_MENU });
+    await sendMessage(chat_id, 'Hozirda javob bera olmayapman. Keyinroq urinib ko\'ring.', { reply_markup: MAIN_MENU });
     return;
   }
 
