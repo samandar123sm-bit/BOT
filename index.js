@@ -7,10 +7,10 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '8767223581:AAHcaekUAnascE8YnM1jaTlJzRPxbC_gNMM';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDT_dzuyqxtW-aUT8pP3HcLXkL_Iheokzs';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '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';
 const APP_URL = 'https://t.me/ZeroMaxxbot/ilovasi';
 const API = `https://api.telegram.org/bot${BOT_TOKEN}`;
-const GEMINI_API = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions';
 
 const OWNER_ID = '1200329840';
 const GROUP_ID = '-1003511488835';
@@ -79,7 +79,7 @@ async function copyMessage(chat_id, from_chat_id, message_id) {
   }
 }
 
-// ===================== ZEROMAKS AI (GEMINI) =====================
+// ===================== ZEROMAKS AI (GROQ) =====================
 async function askZeroMaksAI(userMessage, context = '') {
   const systemPrompt = `Sen ZeroMaks nomli aqlli yordamchisan. Zero Maks — Toshkentdagi mahalliy ovqat yetkazib berish xizmati.
 
@@ -93,52 +93,68 @@ Raqam noma'lum bo'lsa: "BUYURTMA_HOLATI:NOMALUM"
 ${context ? 'Qoshimcha: ' + context : ''}`;
 
   try {
-    const res = await fetch(GEMINI_API, {
+    const res = await fetch(GROQ_API, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-        generationConfig: { maxOutputTokens: 400, temperature: 0.7 }
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 400,
+        temperature: 0.7
       })
     });
     const data = await res.json();
 
-    // API xatosini tekshirish
     if (data.error) {
-      console.error('Gemini API xato:', data.error.message);
+      console.error('Groq API xato:', data.error.message);
       return null;
     }
 
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    return data.choices?.[0]?.message?.content || null;
   } catch(e) {
-    console.error('Gemini xato:', e.message);
+    console.error('Groq xato:', e.message);
     return null;
   }
 }
 
 async function detectBroadcastIntent(text) {
   try {
-    const res = await fetch(GEMINI_API, {
+    const res = await fetch(GROQ_API, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: `Foydalanuvchi xabarining niyatini aniqla. FAQAT JSON qaytар (boshqa hech narsa yozma):
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          {
+            role: 'system',
+            content: `Foydalanuvchi xabarining niyatini aniqla. FAQAT JSON qaytар (boshqa hech narsa yozma):
 {"intent":"broadcast","message":"yuboriladigan matn"} — agar barcha foydalanuvchilarga xabar yubormoqchi bolsa
 {"intent":"other"} — boshqa holatlarda
-Broadcast misollari: "barchaga yubor", "hammaga de", "elon qil", "xabar yubor"` }] },
-        contents: [{ role: 'user', parts: [{ text }] }],
-        generationConfig: { maxOutputTokens: 200, temperature: 0.1 }
+Broadcast misollari: "barchaga yubor", "hammaga de", "elon qil", "xabar yubor"`
+          },
+          { role: 'user', content: text }
+        ],
+        max_tokens: 200,
+        temperature: 0.1
       })
     });
     const data = await res.json();
 
     if (data.error) {
-      console.error('Gemini broadcast xato:', data.error.message);
+      console.error('Groq broadcast xato:', data.error.message);
       return { intent: 'other' };
     }
 
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{"intent":"other"}';
+    const raw = data.choices?.[0]?.message?.content || '{"intent":"other"}';
     return JSON.parse(raw.replace(/```json|```/g, '').trim());
   } catch(e) {
     return { intent: 'other' };
